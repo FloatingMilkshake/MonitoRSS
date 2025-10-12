@@ -10,6 +10,7 @@ services:
 
   rabbitmq-broker:
     image: rabbitmq:3-management-alpine
+    restart: always
     container_name: "rabbitmq-broker"
     healthcheck:
       test: rabbitmq-diagnostics -q ping
@@ -24,11 +25,12 @@ services:
   mongo:
     restart: on-failure:5
     command: mongod --port 27017
-    logging:
-      driver: none
+    #logging:
+    #  driver: none
     image: mongo:7.0.2
     volumes:
-      - "mongodb-data:/data/db"
+      #- "mongodb-data:/data/db"
+      - './data/mongo:/data/db'
     networks:
       - monitorss-default
 
@@ -43,11 +45,12 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     # Comment below to show logs
-    logging:
-      driver: none
+    #logging:
+    #  driver: none
     image: postgres:16.3-alpine
     volumes:
-      - feed-requests-postgres16-data:/var/lib/postgresql/data
+      #- feed-requests-postgres16-data:/var/lib/postgresql/data
+      - './data/feed-requests-postgres16-data:/var/lib/postgresql/data'
       - ./services/feed-requests/sql/setup.sql:/docker-entrypoint-initdb.d/setup.sql
     networks:
       - monitorss-default
