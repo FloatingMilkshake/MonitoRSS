@@ -2,7 +2,7 @@
   "name": "@monitorss/control-panel",
   "version": "0.0.0",
   "scripts": {
-    "dev-mockapi": "cross-env ENV=development-mockapi vite --mode development-mockapi",
+    "dev-mockapi": "cross-env ENV=development-mockapi vite --host --mode development-mockapi",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -22,7 +22,6 @@
     "@tanstack/react-table": "^8.9.3",
     "dayjs": "^1.11.11",
     "eslint-config-airbnb-typescript": "^18.0.0",
-    "focus-trap": "^7.6.5",
     "framer-motion": "^5.5.6",
     "highlight.js": "^11.7.0",
     "i18next": "^21.6.12",

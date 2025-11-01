@@ -1,21 +1,6 @@
 import React, { useState } from "react";
-import {
-  Box,
-  HStack,
-  VStack,
-  Button,
-  IconButton,
-  Menu,
-  MenuButton,
-  MenuList,
-  MenuItem,
-  MenuGroup,
-  Text,
-  Tooltip,
-  MenuDivider,
-} from "@chakra-ui/react";
+import { Box, HStack, VStack, Button, Text } from "@chakra-ui/react";
 import { useFormContext } from "react-hook-form";
-import { AddIcon } from "@chakra-ui/icons";
 import { FaCog } from "react-icons/fa";
 import { VscCollapseAll } from "react-icons/vsc";
 import { ComponentType, Component, SectionComponent } from "./types";
@@ -24,13 +9,18 @@ import { useNavigableTreeContext } from "../../contexts/NavigableTreeContext";
 import PreviewerFormState from "./types/PreviewerFormState";
 import getPreviewerComponentLabel from "./utils/getPreviewerComponentLabel";
 import { SlidingConfigPanel } from "./SlidingConfigPanel";
+import { AddComponentButton } from "./AddComponentButton";
+import { notifyInfo } from "../../utils/notifyInfo";
+import { MESSAGE_BUILDER_MOBILE_BREAKPOINT } from "./constants/MessageBuilderMobileBreakpoint";
+import { useIsPreviewerDesktop } from "../../hooks";
 
 export const ComponentTreeToolbar: React.FC = () => {
   const { addChildComponent } = usePreviewerContext();
-  const { currentSelectedId, setCurrentSelectedId, setExpandedIds } = useNavigableTreeContext();
+  const { currentSelectedId, setExpandedIds } = useNavigableTreeContext();
   const { watch } = useFormContext<PreviewerFormState>();
   const messageComponent = watch("messageComponent");
   const [configuringComponent, setConfiguringComponent] = useState<Component | null>(null);
+  const isDesktop = useIsPreviewerDesktop();
 
   // Find the selected component recursively
   const findComponentById = (component: Component | null, id: string): Component | null => {
@@ -80,7 +70,11 @@ export const ComponentTreeToolbar: React.FC = () => {
     const added = addChildComponent(selectedComponent.id, childType as any);
 
     if (added) {
-      setCurrentSelectedId(added.id);
+      notifyInfo(
+        `Successfully added ${getPreviewerComponentLabel(
+          childType
+        )} component under ${getPreviewerComponentLabel(selectedComponent.type)}`
+      );
     }
   };
 
@@ -97,302 +91,78 @@ export const ComponentTreeToolbar: React.FC = () => {
     <>
       <Box p={3} borderBottom="1px" borderColor="gray.600">
         <HStack justify="space-between" align="center" flexWrap="wrap">
-          <VStack align="start" spacing={1} display={{ base: "none", lg: "block" }}>
-            <Text fontSize="md" fontWeight="bold" color="white" as="h2">
-              Components
-            </Text>
-            <Text fontSize="sm" color="gray.400" display="inline">
-              Selected:{" "}
-              <Text
-                display="inline"
-                fontWeight={selectedComponent ? "semibold" : undefined}
-                fontStyle={!selectedComponent ? "italic" : "normal"}
-              >
-                {selectedComponent ? getPreviewerComponentLabel(selectedComponent.type) : "None"}
+          {isDesktop && (
+            <VStack align="start" spacing={1}>
+              <Text fontSize="md" fontWeight="bold" color="white" as="h2">
+                Components
               </Text>
-            </Text>
-          </VStack>
-          <VStack align="start" spacing={1} display={{ base: "block", lg: "none" }}>
-            <Text fontSize="md" display="inline">
-              Selected:{" "}
-              <Text
-                display="inline"
-                fontWeight={selectedComponent ? "semibold" : undefined}
-                fontStyle={!selectedComponent ? "italic" : "normal"}
-              >
-                {selectedComponent ? getPreviewerComponentLabel(selectedComponent.type) : "None"}
+            </VStack>
+          )}
+          {!isDesktop && (
+            <VStack
+              align="start"
+              spacing={1}
+              display={{ base: "block", [MESSAGE_BUILDER_MOBILE_BREAKPOINT]: "none" }}
+            >
+              <Text fontSize="md" display="inline">
+                Selected:{" "}
+                <Text
+                  display="inline"
+                  fontWeight={selectedComponent ? "semibold" : undefined}
+                  fontStyle={!selectedComponent ? "italic" : "normal"}
+                >
+                  {selectedComponent ? getPreviewerComponentLabel(selectedComponent.type) : "None"}
+                </Text>
               </Text>
-            </Text>
-          </VStack>
+            </VStack>
+          )}
           <HStack spacing={2} flexWrap="wrap">
-            <Tooltip label="Collapse all components" placement="top">
-              <IconButton
-                icon={<VscCollapseAll />}
-                size={{ base: "md", lg: "sm" }}
+            {isDesktop && (
+              <Button
+                leftIcon={<VscCollapseAll />}
+                size="sm"
                 variant="ghost"
                 onClick={handleCollapseAll}
                 isDisabled={!messageComponent}
-                aria-label="Collapse all components"
-              />
-            </Tooltip>
-            <Button
-              display={{
-                base: "inline-flex",
-                lg: "none",
-              }}
-              leftIcon={<FaCog />}
-              size="md"
-              variant="ghost"
-              onClick={() => {
-                if (!selectedComponent) {
-                  return;
-                }
-
-                handleConfigureComponent();
-              }}
-              aria-disabled={!selectedComponent}
-            >
-              Configure
-            </Button>
-            <Menu>
-              <MenuButton
-                as={Button}
-                leftIcon={<AddIcon />}
-                size={{ base: "md", lg: "sm" }}
-                variant="ghost"
-                aria-disabled={!canAddChildren}
-                data-tour-target="add-component-button"
-                onClick={(e) => {
-                  if (!canAddChildren) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }
-                }}
               >
-                New Component
-              </MenuButton>
-              <MenuList bg="gray.700" borderColor="gray.600">
-                {selectedComponent?.type === ComponentType.LegacyRoot && (
-                  <>
-                    <MenuGroup
-                      title={`Text (${
-                        selectedComponent?.children?.filter(
-                          (c) => c.type === ComponentType.LegacyText
-                        ).length || 0
-                      }/1)`}
-                    >
-                      <MenuItem
-                        color="white"
-                        onClick={() => handleAddChild(ComponentType.LegacyText)}
-                        isDisabled={selectedComponent?.children?.some(
-                          (c) => c.type === ComponentType.LegacyText
-                        )}
-                      >
-                        Add {getPreviewerComponentLabel(ComponentType.LegacyText)}
-                      </MenuItem>
-                    </MenuGroup>
-                    <MenuDivider />
-                    <MenuGroup
-                      title={`${getPreviewerComponentLabel(ComponentType.LegacyEmbedContainer)} (${
-                        selectedComponent?.children?.filter(
-                          (c) => c.type === ComponentType.LegacyEmbedContainer
-                        ).length || 0
-                      }/1)`}
-                    >
-                      <MenuItem
-                        color="white"
-                        onClick={() => handleAddChild(ComponentType.LegacyEmbedContainer)}
-                        isDisabled={selectedComponent?.children?.some(
-                          (c) => c.type === ComponentType.LegacyEmbedContainer
-                        )}
-                      >
-                        Add {getPreviewerComponentLabel(ComponentType.LegacyEmbedContainer)}
-                      </MenuItem>
-                    </MenuGroup>
-                    <MenuDivider />
-                    <MenuGroup
-                      title={`Action Rows (${
-                        selectedComponent?.children?.filter(
-                          (c) => c.type === ComponentType.LegacyActionRow
-                        ).length || 0
-                      }/5)`}
-                    >
-                      <MenuItem
-                        color="white"
-                        onClick={() => handleAddChild(ComponentType.LegacyActionRow)}
-                        isDisabled={
-                          (selectedComponent?.children?.filter(
-                            (c) => c.type === ComponentType.LegacyActionRow
-                          ).length || 0) >= 5
-                        }
-                      >
-                        Add {getPreviewerComponentLabel(ComponentType.LegacyActionRow)}
-                      </MenuItem>
-                    </MenuGroup>
-                  </>
-                )}
-                {selectedComponent?.type === ComponentType.LegacyEmbed && (
-                  <MenuGroup title="Embed Components">
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedAuthor)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedAuthor
-                      )}
-                    >
-                      Add Author
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedTitle)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedTitle
-                      )}
-                    >
-                      Add Title
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedDescription)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedDescription
-                      )}
-                    >
-                      Add Description
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedImage)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedImage
-                      )}
-                    >
-                      Add Image
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedThumbnail)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedThumbnail
-                      )}
-                    >
-                      Add Thumbnail
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedFooter)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedFooter
-                      )}
-                    >
-                      Add Footer
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedTimestamp)}
-                      isDisabled={selectedComponent?.children?.some(
-                        (c) => c.type === ComponentType.LegacyEmbedTimestamp
-                      )}
-                    >
-                      Add Timestamp
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.LegacyEmbed && <MenuDivider />}
-                {selectedComponent?.type === ComponentType.LegacyEmbed && (
-                  <MenuGroup
-                    title={`Embed Fields (${
-                      selectedComponent?.children?.filter(
-                        (c) => c.type === ComponentType.LegacyEmbedField
-                      ).length || 0
-                    }/25)`}
-                  >
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbedField)}
-                      isDisabled={
-                        (selectedComponent?.children?.filter(
-                          (c) => c.type === ComponentType.LegacyEmbedField
-                        ).length || 0) >= 25
-                      }
-                    >
-                      Add Field
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.LegacyEmbedContainer && (
-                  <MenuGroup title={`Embeds (${selectedComponent?.children?.length || 0}/9)`}>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyEmbed)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 9}
-                    >
-                      Add Embed
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.LegacyActionRow && (
-                  <MenuGroup title={`Buttons (${selectedComponent?.children?.length || 0}/5)`}>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.LegacyButton)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 5}
-                    >
-                      Add Button
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.V2Root && (
-                  <MenuGroup title={`Components (${selectedComponent?.children?.length || 0}/10)`}>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.V2TextDisplay)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 10}
-                    >
-                      Add Text Display
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.V2ActionRow)}
-                    >
-                      Add Action Row
-                    </MenuItem>
-                    <MenuItem color="white" onClick={() => handleAddChild(ComponentType.V2Section)}>
-                      Add Section
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.V2ActionRow && (
-                  <MenuGroup title={`Buttons (${selectedComponent?.children?.length || 0}/5)`}>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.V2Button)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 5}
-                    >
-                      Add Button
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-                {selectedComponent?.type === ComponentType.V2Section && (
-                  <MenuGroup title={`Components (${selectedComponent?.children?.length || 0}/3)`}>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.V2TextDisplay)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 3}
-                    >
-                      Add Text Display
-                    </MenuItem>
-                    <MenuItem
-                      color="white"
-                      onClick={() => handleAddChild(ComponentType.V2Divider)}
-                      isDisabled={(selectedComponent?.children?.length || 0) >= 3}
-                    >
-                      Add Divider
-                    </MenuItem>
-                  </MenuGroup>
-                )}
-              </MenuList>
-            </Menu>
+                Collapse all
+              </Button>
+            )}
+            {selectedComponent && !isDesktop && (
+              <Box>
+                <AddComponentButton
+                  component={selectedComponent}
+                  canHaveChildren={!!canAddChildren}
+                  onAddChild={handleAddChild}
+                  buttonProps={{
+                    variant: "solid",
+                    colorScheme: undefined,
+                    size: "sm",
+                  }}
+                />
+              </Box>
+            )}
+            {!isDesktop && (
+              <Button
+                display={{
+                  base: "inline-flex",
+                  [MESSAGE_BUILDER_MOBILE_BREAKPOINT]: "none",
+                }}
+                leftIcon={<FaCog />}
+                size="sm"
+                variant="solid"
+                onClick={() => {
+                  if (!selectedComponent) {
+                    return;
+                  }
+
+                  handleConfigureComponent();
+                }}
+                aria-disabled={!selectedComponent}
+              >
+                Configure
+              </Button>
+            )}
           </HStack>
         </HStack>
       </Box>
