@@ -14,6 +14,7 @@ import {
   DiscordWebhookMissingUserPermException,
   DiscordWebhookNonexistentException,
   InsufficientSupporterLevelException,
+  InvalidComponentsV2Exception,
   InvalidFilterExpressionException,
 } from "../../common/exceptions";
 import { DiscordPreviewEmbed } from "../../common/types/discord-preview-embed.type";
@@ -87,6 +88,7 @@ export interface UpdateDiscordChannelConnectionInput {
       componentRows?:
         | DiscordChannelConnection["details"]["componentRows"]
         | null;
+      componentsV2?: DiscordChannelConnection["details"]["componentsV2"] | null;
       placeholderLimits?:
         | DiscordChannelConnection["details"]["placeholderLimits"]
         | null;
@@ -145,6 +147,7 @@ interface CreatePreviewInput {
   forumThreadTags?: DiscordChannelConnection["details"]["forumThreadTags"];
   enablePlaceholderFallback?: boolean;
   componentRows?: DiscordChannelConnection["details"]["componentRows"] | null;
+  componentsV2?: DiscordChannelConnection["details"]["componentsV2"] | null;
   includeCustomPlaceholderPreviews?: boolean;
   channelNewThreadTitle?: DiscordChannelConnection["details"]["channelNewThreadTitle"];
   channelNewThreadExcludesPreview?:
@@ -776,6 +779,28 @@ export class FeedConnectionsDiscordChannelsService {
       }
     }
 
+    if (updates.details?.componentsV2) {
+      const validationResult =
+        await this.feedHandlerService.validateDiscordPayload({
+          componentsV2: updates.details.componentsV2,
+        });
+
+      if (!validationResult.valid) {
+        throw new InvalidComponentsV2Exception(
+          validationResult.errors.map(
+            (e) => new InvalidComponentsV2Exception(e.message, e.path)
+          )
+        );
+      }
+
+      // Use the parsed payload which strips unknown fields
+      if (validationResult.data.componentsV2) {
+        // @ts-ignore
+        setRecordDetails["connections.discordChannels.$.details.componentsV2"] =
+          validationResult.data.componentsV2;
+      }
+    }
+
     const findQuery = {
       _id: feedId,
       "connections.discordChannels.id": connectionId,
@@ -1072,8 +1097,9 @@ export class FeedConnectionsDiscordChannelsService {
           previewInput?.enablePlaceholderFallback ??
           connection.details.enablePlaceholderFallback,
         components: castDiscordComponentRowsForMedium(
-          previewInput?.componentRows || connection.details.componentRows
+          previewInput?.componentRows
         ),
+        componentsV2: previewInput?.componentsV2,
         channelNewThreadTitle:
           previewInput?.channelNewThreadTitle ||
           connection.details.channelNewThreadTitle,
@@ -1102,6 +1128,7 @@ export class FeedConnectionsDiscordChannelsService {
     enablePlaceholderFallback,
     customPlaceholders,
     componentRows,
+    componentsV2,
     includeCustomPlaceholderPreviews,
     externalProperties,
     channelNewThreadTitle,
@@ -1182,6 +1209,8 @@ export class FeedConnectionsDiscordChannelsService {
         placeholderLimits,
         enablePlaceholderFallback: enablePlaceholderFallback,
         components: castDiscordComponentRowsForMedium(componentRows),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        componentsV2: (componentsV2 as any) ?? undefined,
       },
     } as const;
 

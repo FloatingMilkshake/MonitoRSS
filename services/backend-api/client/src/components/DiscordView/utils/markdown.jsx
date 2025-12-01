@@ -167,6 +167,23 @@ function translateSurrogatesToInlineEmoji(surrogates) {
 
 const baseRules = {
   newline: SimpleMarkdown.defaultRules.newline,
+  heading: {
+    order: SimpleMarkdown.defaultRules.heading.order,
+    match: SimpleMarkdown.blockRegex(/^(#{1,3})\s+([^\n]+?)(?:\n|$)/),
+    parse(capture, parse, state) {
+      return {
+        level: capture[1].length,
+        content: parse(capture[2].trim(), state),
+      };
+    },
+    react(node, recurseOutput, state) {
+      return (
+        <div key={state.key} className={`markdown-heading markdown-heading-${node.level}`}>
+          {recurseOutput(node.content, state)}
+        </div>
+      );
+    },
+  },
   paragraph: SimpleMarkdown.defaultRules.paragraph,
   escape: SimpleMarkdown.defaultRules.escape,
   link: SimpleMarkdown.defaultRules.link,
@@ -316,7 +333,11 @@ function createRules(r) {
     paragraph: {
       ...paragraph,
       react(node, recurseOutput, state) {
-        return <p key={state.key}>{recurseOutput(node.content, state)}</p>;
+        return (
+          <p key={state.key} style={{ margin: 0 }}>
+            {recurseOutput(node.content, state)}
+          </p>
+        );
       },
     },
     url: {

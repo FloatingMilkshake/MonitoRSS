@@ -1,4 +1,30 @@
-import { FeedConnectionDiscordChannelType } from "../../features/feeds/constants";
+import {
+  FeedConnectionDiscordChannelType,
+  FeedConnectionDiscordComponentType,
+} from "../../features/feeds/constants";
+
+// V2 Component Types for DiscordMediumEvent
+export interface DiscordMediumEmojiV2 {
+  id: string;
+  name?: string | null;
+  animated?: boolean | null;
+}
+
+export interface DiscordMediumMediaV2 {
+  url: string;
+}
+
+export interface DiscordMediumTextDisplayV2 {
+  type: FeedConnectionDiscordComponentType.TextDisplay;
+  content: string;
+}
+
+export interface DiscordMediumThumbnailV2 {
+  type: FeedConnectionDiscordComponentType.Thumbnail;
+  media: DiscordMediumMediaV2;
+  description?: string | null;
+  spoiler?: boolean;
+}
 
 export interface DiscordMediumEvent {
   key: "discord";
@@ -31,6 +57,7 @@ export interface DiscordMediumEvent {
         url?: string | null;
       }>;
     }> | null;
+    componentsV2?: Array<Record<string, unknown>> | null;
     content?: string;
     embeds?: Array<{
       title?: string;
