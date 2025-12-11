@@ -911,6 +911,7 @@ export class UserFeedsService {
       computedStatus: boolean;
       legacyFeedId?: Types.ObjectId;
       ownedByUser: boolean;
+      refreshRateSeconds?: number;
     }>
   > {
     const useSort = sort || GetUserFeedsInputSortKey.CreatedAtDescending;
@@ -924,6 +925,13 @@ export class UserFeedsService {
         search,
         filters,
       }),
+      {
+        $addFields: {
+          refreshRateSeconds: {
+            $ifNull: ["$userRefreshRateSeconds", "$refreshRateSeconds"],
+          },
+        },
+      },
       {
         $sort: {
           [sortKey]: sortDirection,
@@ -948,6 +956,7 @@ export class UserFeedsService {
           legacyFeedId: 1,
           ownedByUser: 1,
           userTags: 1,
+          refreshRateSeconds: 1,
         },
       },
     ]);

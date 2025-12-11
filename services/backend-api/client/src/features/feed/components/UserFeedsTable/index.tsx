@@ -31,11 +31,12 @@ import {
   Link,
   chakra,
 } from "@chakra-ui/react";
-import React, { CSSProperties, useContext, useEffect, useMemo, useState } from "react";
+import React, { CSSProperties, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   OnChangeFn,
   RowSelectionState,
   SortingState,
+  VisibilityState,
   createColumnHelper,
   flexRender,
   getCoreRowModel,
@@ -43,6 +44,7 @@ import {
 } from "@tanstack/react-table";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CloseIcon, SearchIcon } from "@chakra-ui/icons";
+import { FaFilter, FaTableColumns } from "react-icons/fa6";
 import dayjs from "dayjs";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { Loading } from "@/components";
@@ -52,6 +54,8 @@ import { DATE_FORMAT, pages } from "../../../../constants";
 import { useUserFeedsInfinite } from "../../hooks/useUserFeedsInfinite";
 import { UserFeedStatusFilterContext } from "../../../../contexts";
 import { useMultiSelectUserFeedContext } from "../../../../contexts/MultiSelectUserFeedContext";
+import { useUserMe, useUpdateUserMe } from "../../../discordUser/hooks";
+import { formatRefreshRateSeconds } from "../../../../utils/formatRefreshRateSeconds";
 
 interface Props {}
 
@@ -94,13 +98,42 @@ const STATUS_FILTERS = [
   },
 ];
 
+const TOGGLEABLE_COLUMNS = [
+  { id: "computedStatus", label: "Status" },
+  { id: "url", label: "URL" },
+  { id: "createdAt", label: "Added On" },
+  { id: "refreshRateSeconds", label: "Refresh Rate" },
+  { id: "ownedByUser", label: "Shared with Me" },
+] as const;
+
+const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
+  computedStatus: true,
+  url: true,
+  createdAt: true,
+  refreshRateSeconds: false,
+  ownedByUser: true,
+};
+
 export const UserFeedsTable: React.FC<Props> = () => {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const searchParamsSearch = searchParams.get("search") || "";
   const [searchInput, setSearchInput] = useState(searchParamsSearch);
   // const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const { data: userMe } = useUserMe();
+  const { mutateAsync: updateUser } = useUpdateUserMe();
+  const savedSortPreference = userMe?.result?.preferences?.feedListSort;
+  const savedColumnVisibility = userMe?.result?.preferences?.feedListColumnVisibility;
+  const [sorting, setSorting] = useState<SortingState>(() => {
+    if (savedSortPreference) {
+      return [{ id: savedSortPreference.key, desc: savedSortPreference.direction === "desc" }];
+    }
+
+    return [];
+  });
+  const [columnVisibility, setColumnVisibility] =
+    useState<VisibilityState>(DEFAULT_COLUMN_VISIBILITY);
+  const hasInitializedColumnVisibility = useRef(false);
   const { statusFilters, setStatusFilters } = useContext(UserFeedStatusFilterContext);
   const { selectedFeeds, setSelectedFeeds } = useMultiSelectUserFeedContext();
   const {
@@ -306,6 +339,19 @@ export const UserFeedsTable: React.FC<Props> = () => {
           return <span>{dayjs(value).format(DATE_FORMAT)}</span>;
         },
       }),
+      columnHelper.accessor((row) => row.refreshRateSeconds, {
+        id: "refreshRateSeconds",
+        header: () => <span>Refresh Rate</span>,
+        cell: (info) => {
+          const value = info.getValue();
+
+          if (!value) {
+            return <span>-</span>;
+          }
+
+          return <span>{formatRefreshRateSeconds(value)}</span>;
+        },
+      }),
       columnHelper.accessor("ownedByUser", {
         id: "ownedByUser",
         header: () => <span>Shared with Me</span>,
@@ -346,8 +392,10 @@ export const UserFeedsTable: React.FC<Props> = () => {
     state: {
       rowSelection,
       sorting,
+      columnVisibility,
     },
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
   });
 
   const { getHeaderGroups, getRowModel, getSelectedRowModel } = tableInstance;
@@ -382,6 +430,87 @@ export const UserFeedsTable: React.FC<Props> = () => {
     setSearch(searchParamsSearch);
   }, [searchParamsSearch, setSearch]);
 
+  // Sync sorting when saved preference loads/changes
+  useEffect(() => {
+    if (savedSortPreference) {
+      setSorting([{ id: savedSortPreference.key, desc: savedSortPreference.direction === "desc" }]);
+    }
+  }, [savedSortPreference?.key, savedSortPreference?.direction]);
+
+  // Save sorting preference when it changes (debounced)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const newPreference = sorting[0]
+        ? { key: sorting[0].id, direction: (sorting[0].desc ? "desc" : "asc") as "asc" | "desc" }
+        : null;
+
+      // Only save if different from current saved value
+      const currentKey = savedSortPreference?.key;
+      const currentDirection = savedSortPreference?.direction;
+      const newKey = newPreference?.key;
+      const newDirection = newPreference?.direction;
+
+      if (currentKey !== newKey || currentDirection !== newDirection) {
+        updateUser({
+          details: {
+            preferences: {
+              feedListSort: newPreference,
+            },
+          },
+        });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [sorting, savedSortPreference, updateUser]);
+
+  // Sync column visibility only on initial load
+  useEffect(() => {
+    if (savedColumnVisibility && !hasInitializedColumnVisibility.current) {
+      hasInitializedColumnVisibility.current = true;
+      setColumnVisibility({
+        ...DEFAULT_COLUMN_VISIBILITY,
+        ...savedColumnVisibility,
+      });
+    }
+  }, [savedColumnVisibility]);
+
+  // Save column visibility preference when it changes (debounced)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      // Check if at least one column is visible
+      const visibleCount = TOGGLEABLE_COLUMNS.filter(({ id }) => columnVisibility[id]).length;
+
+      if (visibleCount === 0) {
+        return; // Don't save if no columns visible
+      }
+
+      // Only save if different from current saved value
+      const hasChanges = TOGGLEABLE_COLUMNS.some(
+        ({ id }) =>
+          columnVisibility[id] !== (savedColumnVisibility?.[id] ?? DEFAULT_COLUMN_VISIBILITY[id])
+      );
+
+      if (hasChanges) {
+        updateUser({
+          details: {
+            preferences: {
+              feedListColumnVisibility: {
+                computedStatus: columnVisibility.computedStatus,
+                url: columnVisibility.url,
+                createdAt: columnVisibility.createdAt,
+                refreshRateSeconds: columnVisibility.refreshRateSeconds,
+                ownedByUser: columnVisibility.ownedByUser,
+              },
+            },
+          },
+        });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [columnVisibility, savedColumnVisibility, updateUser]);
+
   const selectedFeedIds = selectedRows.map((row) => row.original.id);
 
   useEffect(() => {
@@ -398,6 +527,9 @@ export const UserFeedsTable: React.FC<Props> = () => {
   }
 
   const isInitiallyLoading = status === "loading" && !data;
+  const selectedTableColumnCountLabel = `${
+    TOGGLEABLE_COLUMNS.filter(({ id }) => columnVisibility[id]).length
+  } of ${TOGGLEABLE_COLUMNS.length}`;
 
   return (
     <Stack spacing={4}>
@@ -428,7 +560,7 @@ export const UserFeedsTable: React.FC<Props> = () => {
                   onSearchChange(value);
                 }}
                 value={searchInput || ""}
-                minWidth="150px"
+                minWidth="275px"
                 placeholder={t("pages.feeds.tableSearch")}
               />
               {search && !isFetching && (
@@ -456,7 +588,13 @@ export const UserFeedsTable: React.FC<Props> = () => {
           </Flex>
           <Flex>
             <Menu closeOnSelect={false}>
-              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} maxWidth={200} width="100%">
+              <MenuButton
+                as={Button}
+                leftIcon={<FaFilter />}
+                rightIcon={<ChevronDownIcon />}
+                maxWidth={200}
+                width="100%"
+              >
                 <Text
                   overflow="hidden"
                   textAlign="left"
@@ -464,8 +602,8 @@ export const UserFeedsTable: React.FC<Props> = () => {
                   whiteSpace="nowrap"
                 >
                   {statusFilters?.length
-                    ? `Status: ${statusFilters.length} selected`
-                    : "Filter by Status"}
+                    ? `Status: ${statusFilters.length} of ${STATUS_FILTERS.length}`
+                    : "Status"}
                 </Text>
               </MenuButton>
               <MenuList maxW="300px">
@@ -478,7 +616,7 @@ export const UserFeedsTable: React.FC<Props> = () => {
                     <MenuItemOption key={val.value} value={val.value}>
                       <Stack>
                         <HStack alignItems="center">
-                          <UserFeedStatusTag status={val.value} />
+                          <UserFeedStatusTag ariaHidden status={val.value} />
                           <chakra.span>{val.label}</chakra.span>
                         </HStack>
                         <chakra.span display="block" color="whiteAlpha.600">
@@ -487,6 +625,61 @@ export const UserFeedsTable: React.FC<Props> = () => {
                       </Stack>
                     </MenuItemOption>
                   ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+          </Flex>
+          <Flex>
+            <Menu closeOnSelect={false}>
+              <MenuButton
+                as={Button}
+                leftIcon={<FaTableColumns />}
+                rightIcon={<ChevronDownIcon />}
+                maxWidth={200}
+                width="100%"
+                aria-label={`Display table columns: ${selectedTableColumnCountLabel}`}
+              >
+                <Text
+                  overflow="hidden"
+                  textAlign="left"
+                  textOverflow="ellipsis"
+                  whiteSpace="nowrap"
+                >
+                  {`Columns: ${selectedTableColumnCountLabel}`}
+                </Text>
+              </MenuButton>
+              <MenuList maxW="250px">
+                <MenuOptionGroup
+                  type="checkbox"
+                  value={TOGGLEABLE_COLUMNS.filter(({ id }) => columnVisibility[id]).map(
+                    ({ id }) => id
+                  )}
+                  onChange={(values) => {
+                    if (Array.isArray(values) && values.length === 0) {
+                      return; // Prevent deselecting all columns
+                    }
+
+                    const newVisibility: VisibilityState = {};
+
+                    TOGGLEABLE_COLUMNS.forEach(({ id }) => {
+                      newVisibility[id] = Array.isArray(values) ? values.includes(id) : false;
+                    });
+                    setColumnVisibility(newVisibility);
+                  }}
+                >
+                  {TOGGLEABLE_COLUMNS.map(({ id, label }) => {
+                    const isVisible = columnVisibility[id];
+                    const visibleCount = TOGGLEABLE_COLUMNS.filter(
+                      ({ id: colId }) => columnVisibility[colId]
+                    ).length;
+                    const isLastVisible = isVisible && visibleCount === 1;
+
+                    return (
+                      <MenuItemOption key={id} value={id} isDisabled={isLastVisible}>
+                        {label}
+                      </MenuItemOption>
+                    );
+                  })}
                 </MenuOptionGroup>
               </MenuList>
             </Menu>

@@ -9,6 +9,20 @@ export const UserMeSchema = object({
     dateFormat: string().nullable(),
     dateLocale: string().nullable(),
     dateTimezone: string().nullable(),
+    feedListSort: object({
+      key: string().required(),
+      direction: string().oneOf(["asc", "desc"]).required(),
+    })
+      .nullable()
+      .optional(),
+    feedListColumnVisibility: object({
+      computedStatus: bool().optional(),
+      title: bool().optional(),
+      url: bool().optional(),
+      createdAt: bool().optional(),
+      ownedByUser: bool().optional(),
+      refreshRateSeconds: bool().optional(),
+    }).optional(),
   }).default({}),
   subscription: object({
     product: object({
@@ -23,9 +37,7 @@ export const UserMeSchema = object({
     )
       .optional()
       .nullable(),
-    status: string()
-      .oneOf(["ACTIVE", "CANCELLED", "PAST_DUE", "PAUSED"])
-      .required(),
+    status: string().oneOf(["ACTIVE", "CANCELLED", "PAST_DUE", "PAUSED"]).required(),
     nextBillDate: string().nullable(),
     cancellationDate: string().nullable(),
     billingInterval: string().oneOf(["month", "year"]).nullable(),
