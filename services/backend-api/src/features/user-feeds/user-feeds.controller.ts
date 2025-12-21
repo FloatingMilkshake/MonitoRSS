@@ -283,6 +283,21 @@ export class UserFeedsController {
     return result;
   }
 
+  @Post("/:feedId/delivery-preview")
+  @HttpCode(HttpStatus.OK)
+  async getDeliveryPreview(
+    @Param("feedId", GetUserFeedsPipe())
+    [{ feed }]: GetUserFeedsPipeOutput,
+    @Body(TransformValidationPipe)
+    { skip, limit }: import("./dto").DeliveryPreviewInputDto
+  ) {
+    return this.userFeedsService.getDeliveryPreview({
+      feed,
+      skip: skip ?? 0,
+      limit: limit ?? 10,
+    });
+  }
+
   @Post("/:feedId/get-article-properties")
   @UseFilters(GetUserFeedArticlesExceptionFilter)
   async getArticleProperties(

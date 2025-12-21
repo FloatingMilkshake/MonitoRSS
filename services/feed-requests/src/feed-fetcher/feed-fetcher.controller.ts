@@ -144,11 +144,13 @@ export class FeedFetcherController {
       lookupKey: data.lookupDetails?.key,
     });
 
-    const isFetchedOver30MinutesAgo =
+    const stalenessThresholdSeconds = data.stalenessThresholdSeconds ?? 1800; // 30 min default
+    const isStale =
       latestRequest &&
-      dayjs().diff(latestRequest.request.createdAt, 'minute') > 30;
+      dayjs().diff(latestRequest.request.createdAt, 'second') >
+        stalenessThresholdSeconds;
 
-    if (data.executeFetchIfStale && isFetchedOver30MinutesAgo) {
+    if (data.executeFetchIfStale && isStale) {
       const { request } = await this.feedFetcherService.fetchAndSaveResponse(
         data.url,
         {
@@ -169,30 +171,24 @@ export class FeedFetcherController {
 
     // If there's no text, response must be fetched to be cached
     if (!latestRequest) {
-      if (data.executeFetchIfNotExists) {
-        const savedData = await this.feedFetcherService.fetchAndSaveResponse(
-          data.url,
-          {
-            saveResponseToObjectStorage: data.debug,
-            lookupDetails: data.lookupDetails,
-            source: undefined,
-            headers: data.lookupDetails?.headers,
-          },
-        );
+      const savedData = await this.feedFetcherService.fetchAndSaveResponse(
+        data.url,
+        {
+          saveResponseToObjectStorage: data.debug,
+          lookupDetails: data.lookupDetails,
+          source: undefined,
+          headers: data.lookupDetails?.headers,
+        },
+      );
 
-        await this.partitionedRequestsStoreService.flushInserts([
-          savedData.request,
-        ]);
+      await this.partitionedRequestsStoreService.flushInserts([
+        savedData.request,
+      ]);
 
-        latestRequest = {
-          request: { ...savedData.request },
-          decodedResponseText: savedData.responseText,
-        };
-      } else {
-        return {
-          requestStatus: 'PENDING' as const,
-        };
-      }
+      latestRequest = {
+        request: { ...savedData.request },
+        decodedResponseText: savedData.responseText,
+      };
     }
 
     const latestRequestStatus = latestRequest.request.status;

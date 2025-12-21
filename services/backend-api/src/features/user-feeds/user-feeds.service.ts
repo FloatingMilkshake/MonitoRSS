@@ -84,6 +84,7 @@ import {
 } from "./dto/copy-user-feed-settings-input.dto";
 import { generateUserFeedOwnershipFilters } from "./utils/get-user-feed-ownership-filters.utils";
 import { generateUserFeedSearchFilters } from "./utils/get-user-feed-search-filters.utils";
+import { getEffectiveRefreshRateSeconds } from "./utils/get-effective-refresh-rate";
 import { UserFeedTargetFeedSelectionType } from "./constants/target-feed-selection-type.type";
 import { SourceFeedNotFoundException } from "./exceptions/source-feed-not-found.exception";
 import { getUserFeedTagLookupAggregateStage } from "./constants/user-feed-tag-lookup-aggregate-stage.constants";
@@ -1274,8 +1275,7 @@ export class UserFeedsService {
 
   async manuallyRequest(feed: UserFeed) {
     const lastRequestTime = feed.lastManualRequestAt || new Date(0);
-    const waitDurationSeconds =
-      feed.userRefreshRateSeconds || feed.refreshRateSeconds || 10 * 60;
+    const waitDurationSeconds = getEffectiveRefreshRateSeconds(feed, 10 * 60)!;
     const secondsSinceLastRequest = dayjs().diff(
       dayjs(lastRequestTime),
       "seconds"
@@ -2240,5 +2240,93 @@ export class UserFeedsService {
     }
 
     throw new Error(`Unhandled request status ${requestStatus}`);
+  }
+
+  async getDeliveryPreview({
+    feed,
+    skip,
+    limit,
+  }: {
+    feed: UserFeed;
+    skip: number;
+    limit: number;
+  }) {
+    const [user, { maxDailyArticles }] = await Promise.all([
+      this.usersService.getOrCreateUserByDiscordId(feed.user.discordUserId),
+      this.supportersService.getBenefitsOfDiscordUser(feed.user.discordUserId),
+    ]);
+
+    const lookupDetails = getFeedRequestLookupDetails({
+      feed,
+      user,
+      decryptionKey: this.configService.get("BACKEND_API_ENCRYPTION_KEY_HEX"),
+    });
+
+    const mediums = this.mapConnectionsToMediums(feed);
+
+    const result = await this.feedHandlerService.getDeliveryPreview({
+      feed: {
+        id: feed._id.toHexString(),
+        url: feed.url,
+        blockingComparisons: feed.blockingComparisons || [],
+        passingComparisons: feed.passingComparisons || [],
+        dateChecks: feed.dateCheckOptions,
+        formatOptions: feed.formatOptions,
+        externalProperties: feed.externalProperties?.map((ep) => ({
+          sourceField: ep.sourceField,
+          label: ep.label,
+          cssSelector: ep.cssSelector,
+        })),
+        requestLookupDetails: lookupDetails
+          ? {
+              key: lookupDetails.key,
+              url: lookupDetails.url,
+              headers: lookupDetails.headers,
+            }
+          : null,
+        refreshRateSeconds: getEffectiveRefreshRateSeconds(feed),
+      },
+      mediums,
+      articleDayLimit: feed.maxDailyArticles ?? maxDailyArticles,
+      skip,
+      limit,
+    });
+
+    return { result };
+  }
+
+  private mapConnectionsToMediums(
+    feed: UserFeed
+  ): import("../../services/feed-handler/types").DeliveryPreviewMediumInput[] {
+    const mediums: import("../../services/feed-handler/types").DeliveryPreviewMediumInput[] =
+      [];
+    const SKIP_CONNECTION_TYPES = [FeedConnectionTypeEntityKey.DiscordWebhooks];
+
+    for (const connectionType of Object.values(FeedConnectionTypeEntityKey)) {
+      if (SKIP_CONNECTION_TYPES.includes(connectionType)) {
+        continue;
+      }
+
+      const connections = feed.connections?.[connectionType] || [];
+
+      for (const conn of connections) {
+        if (conn.disabledCode) {
+          continue;
+        }
+
+        mediums.push({
+          id: conn.id.toHexString(),
+          rateLimits: conn.rateLimits?.map((rl) => ({
+            limit: rl.limit,
+            timeWindowSeconds: rl.timeWindowSeconds,
+          })),
+          filters: conn.filters?.expression
+            ? { expression: conn.filters.expression }
+            : undefined,
+        });
+      }
+    }
+
+    return mediums;
   }
 }

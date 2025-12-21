@@ -24,6 +24,7 @@ export async function fetchFeed(
     executeFetch?: boolean;
     executeFetchIfNotInCache?: boolean;
     executeFetchIfStale?: boolean;
+    stalenessThresholdSeconds?: number;
     retries?: number;
     hashToCompare?: string;
     lookupDetails?: FeedRequestLookupDetails | null;
@@ -35,18 +36,20 @@ export async function fetchFeed(
   let body: { json: () => Promise<unknown> };
 
   try {
+    const requestBody = {
+      url,
+      executeFetchIfNotExists: options?.executeFetchIfNotInCache ?? false,
+      executeFetch: options?.executeFetch ?? false,
+      executeFetchIfStale: options?.executeFetchIfStale ?? false,
+      stalenessThresholdSeconds: options?.stalenessThresholdSeconds,
+      hashToCompare: options?.hashToCompare || undefined,
+      lookupDetails: options?.lookupDetails,
+    }
     const response = await pRetry(
       async () =>
         request(serviceHost, {
           method: "POST",
-          body: JSON.stringify({
-            url,
-            executeFetchIfNotExists: options?.executeFetchIfNotInCache ?? false,
-            executeFetch: options?.executeFetch ?? false,
-            executeFetchIfStale: options?.executeFetchIfStale ?? false,
-            hashToCompare: options?.hashToCompare || undefined,
-            lookupDetails: options?.lookupDetails,
-          }),
+          body: JSON.stringify(requestBody),
           headers: {
             "content-type": "application/json",
             accept: "application/json",
@@ -121,7 +124,6 @@ async function handleFetchResponse({
   }
 
   if (
-    requestStatus === FeedResponseRequestStatus.Pending ||
     requestStatus === FeedResponseRequestStatus.MatchedHash
   ) {
     return { requestStatus };

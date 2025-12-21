@@ -12,10 +12,19 @@ import {
   getUnderLimitCheck,
   deliverArticles,
   type LimitState,
+  createTestDiscordRestClient,
 } from ".";
 import { createInMemoryDeliveryRecordStore } from "../stores/in-memory/delivery-record-store";
 import type { ArticleDeliveryState } from "../stores/interfaces/delivery-record-store";
 import type { Article } from "../articles/parser";
+import {
+  ExpressionType,
+  LogicalExpressionOperator,
+  RelationalExpressionOperator,
+  RelationalExpressionLeft,
+  RelationalExpressionRight,
+  type LogicalExpression,
+} from "../articles/filters";
 
 function createJobData(overrides?: Partial<JobData>): JobData {
   return {
@@ -485,6 +494,332 @@ describe("delivery", () => {
 
       expect(result.remaining).toBe(8); // Only 2 deliveries to medium-1
     });
+  });
+});
+
+import { DeliveryPreviewStage, DeliveryPreviewStageStatus, type DeliveryPreviewStageResult } from "../delivery-preview";
+
+describe("diagnostic recording in delivery", () => {
+  it("records FeedRateLimit diagnostic when feed rate limit is checked", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { recordRateLimitDiagnostic } = await import(".");
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("test-hash", async () => {
+      recordRateLimitDiagnostic({
+        articleIdHash: "test-hash",
+        isFeedLevel: true,
+        currentCount: 15,
+        limit: 20,
+        timeWindowSeconds: 86400,
+        remaining: 5,
+      });
+      previews = getDeliveryPreviewResultsForArticle("test-hash");
+    });
+
+    const rateLimitDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.FeedRateLimit
+    );
+    expect(rateLimitDiagnostic).toBeDefined();
+    expect(rateLimitDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Passed);
+    expect(
+      (rateLimitDiagnostic as { details: { remaining: number } }).details
+        .remaining
+    ).toBe(5);
+  });
+
+  it("records MediumRateLimit diagnostic when medium rate limit is checked", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { recordRateLimitDiagnostic } = await import(".");
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("test-hash", async () => {
+      recordRateLimitDiagnostic({
+        articleIdHash: "test-hash",
+        isFeedLevel: false,
+        mediumId: "medium-123",
+        currentCount: 8,
+        limit: 10,
+        timeWindowSeconds: 3600,
+        remaining: 2,
+      });
+      previews = getDeliveryPreviewResultsForArticle("test-hash");
+    });
+
+    const rateLimitDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.MediumRateLimit
+    );
+    expect(rateLimitDiagnostic).toBeDefined();
+    expect(rateLimitDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Passed);
+    expect(
+      (rateLimitDiagnostic as { details: { mediumId: string } }).details.mediumId
+    ).toBe("medium-123");
+  });
+
+  it("records failed rate limit diagnostic when limit exceeded", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { recordRateLimitDiagnostic } = await import(".");
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("test-hash", async () => {
+      recordRateLimitDiagnostic({
+        articleIdHash: "test-hash",
+        isFeedLevel: true,
+        currentCount: 20,
+        limit: 20,
+        timeWindowSeconds: 86400,
+        remaining: 0,
+      });
+      previews = getDeliveryPreviewResultsForArticle("test-hash");
+    });
+
+    const rateLimitDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.FeedRateLimit
+    );
+    expect(rateLimitDiagnostic).toBeDefined();
+    expect(rateLimitDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Failed);
+    expect(
+      (rateLimitDiagnostic as { details: { wouldExceed: boolean } }).details
+        .wouldExceed
+    ).toBe(true);
+  });
+
+  it("records MediumFilter diagnostic when filter is evaluated", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { recordMediumFilterDiagnostic } = await import(".");
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("test-hash", async () => {
+      recordMediumFilterDiagnostic({
+        articleIdHash: "test-hash",
+        mediumId: "medium-123",
+        filterExpression: { type: "LOGICAL", op: "AND", children: [] },
+        filterResult: true,
+        explainBlocked: [],
+        explainMatched: [],
+      });
+      previews = getDeliveryPreviewResultsForArticle("test-hash");
+    });
+
+    const filterDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.MediumFilter
+    );
+    expect(filterDiagnostic).toBeDefined();
+    expect(filterDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Passed);
+  });
+
+  it("records failed MediumFilter diagnostic when filter blocks article", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { recordMediumFilterDiagnostic } = await import(".");
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("test-hash", async () => {
+      recordMediumFilterDiagnostic({
+        articleIdHash: "test-hash",
+        mediumId: "medium-123",
+        filterExpression: { type: "LOGICAL", op: "AND", children: [] },
+        filterResult: false,
+        explainBlocked: [
+          {
+            message: "Title does not contain 'keyword'",
+            truncatedReferenceValue: "Some article title",
+            filterInput: "keyword",
+            fieldName: "title",
+            operator: "CONTAINS",
+            isNegated: false,
+          },
+        ],
+        explainMatched: [],
+      });
+      previews = getDeliveryPreviewResultsForArticle("test-hash");
+    });
+
+    const filterDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.MediumFilter
+    );
+    expect(filterDiagnostic).toBeDefined();
+    expect(filterDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Failed);
+    const details = filterDiagnostic!.details as { explainBlocked: Array<{ message: string }> };
+    expect(details.explainBlocked[0]!.message).toBe("Title does not contain 'keyword'");
+  });
+
+  it("does not record previews outside diagnostic context", async () => {
+    const { getDeliveryPreviewResultsForArticle } = await import("../delivery-preview");
+    const { recordRateLimitDiagnostic, recordMediumFilterDiagnostic } =
+      await import(".");
+
+    // Call outside diagnostic context - should not throw
+    recordRateLimitDiagnostic({
+      articleIdHash: "test-hash",
+      isFeedLevel: true,
+      currentCount: 0,
+      limit: 20,
+      timeWindowSeconds: 86400,
+      remaining: 20,
+    });
+
+    recordMediumFilterDiagnostic({
+      articleIdHash: "test-hash",
+      mediumId: "medium-123",
+      filterExpression: null,
+      filterResult: true,
+      explainBlocked: [],
+      explainMatched: [],
+    });
+
+    const previews = getDeliveryPreviewResultsForArticle("test-hash");
+    expect(previews).toEqual([]);
+  });
+});
+
+describe("diagnostic recording during deliverArticles execution", () => {
+  it("records MediumFilter diagnostic when medium filter is evaluated during delivery", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { deliverArticles } = await import(".");
+
+    const store = createInMemoryDeliveryRecordStore();
+    const article: Article = {
+      flattened: {
+        id: "article-1",
+        idHash: "hash-1",
+        title: "Test Article",
+      },
+      raw: {},
+    };
+
+    // Create a medium with a filter that will pass
+    const filterExpression: LogicalExpression = {
+      type: ExpressionType.Logical,
+      op: LogicalExpressionOperator.And,
+      children: [
+        {
+          type: ExpressionType.Relational,
+          op: RelationalExpressionOperator.Contains,
+          left: { type: RelationalExpressionLeft.Article, value: "title" },
+          right: { type: RelationalExpressionRight.String, value: "Test" },
+        },
+      ],
+    };
+    const mediumWithFilter = {
+      id: "medium-filter-test",
+      filters: {
+        expression: filterExpression,
+      },
+      details: {
+        guildId: "guild-123",
+        channel: {
+          id: "channel-123",
+        },
+      },
+    };
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("hash-1", async () => {
+      await store.startContext(async () => {
+        await deliverArticles(
+          [article],
+          [mediumWithFilter],
+          {
+            feedId: "feed-1",
+            feedUrl: "https://example.com/feed.xml",
+            articleDayLimit: 100,
+            discordClient: createTestDiscordRestClient(),
+            deliveryRecordStore: store,
+          }
+        );
+      });
+      previews = getDeliveryPreviewResultsForArticle("hash-1");
+    });
+
+    const filterDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.MediumFilter
+    );
+    expect(filterDiagnostic).toBeDefined();
+    expect(filterDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Passed);
+    expect(
+      (filterDiagnostic as { details: { mediumId: string } }).details.mediumId
+    ).toBe("medium-filter-test");
+  });
+
+  it("records failed MediumFilter diagnostic when filter blocks article during delivery", async () => {
+    const { startDeliveryPreviewContext, getDeliveryPreviewResultsForArticle } =
+      await import("../delivery-preview");
+    const { deliverArticles } = await import(".");
+
+    const store = createInMemoryDeliveryRecordStore();
+    const article: Article = {
+      flattened: {
+        id: "article-1",
+        idHash: "hash-1",
+        title: "No Match Here",
+      },
+      raw: {},
+    };
+
+    // Create a medium with a filter that will NOT pass
+    const blockingFilterExpression: LogicalExpression = {
+      type: ExpressionType.Logical,
+      op: LogicalExpressionOperator.And,
+      children: [
+        {
+          type: ExpressionType.Relational,
+          op: RelationalExpressionOperator.Contains,
+          left: { type: RelationalExpressionLeft.Article, value: "title" },
+          right: { type: RelationalExpressionRight.String, value: "REQUIRED_KEYWORD" },
+        },
+      ],
+    };
+    const mediumWithBlockingFilter = {
+      id: "medium-blocking-test",
+      filters: {
+        expression: blockingFilterExpression,
+      },
+      details: {
+        guildId: "guild-123",
+        channel: {
+          id: "channel-123",
+        },
+      },
+    };
+
+    let previews: DeliveryPreviewStageResult[] = [];
+
+    await startDeliveryPreviewContext("hash-1", async () => {
+      await store.startContext(async () => {
+        await deliverArticles(
+          [article],
+          [mediumWithBlockingFilter],
+          {
+            feedId: "feed-1",
+            feedUrl: "https://example.com/feed.xml",
+            articleDayLimit: 100,
+            discordClient: createTestDiscordRestClient(),
+            deliveryRecordStore: store,
+          }
+        );
+      });
+      previews = getDeliveryPreviewResultsForArticle("hash-1");
+    });
+
+    const filterDiagnostic = previews.find(
+      (d) => d.stage === DeliveryPreviewStage.MediumFilter
+    );
+    expect(filterDiagnostic).toBeDefined();
+    expect(filterDiagnostic!.status).toBe(DeliveryPreviewStageStatus.Failed);
+    const details = filterDiagnostic!.details as { explainBlocked: Array<{ message: string }> };
+    expect(details.explainBlocked.length).toBeGreaterThan(0);
   });
 });
 

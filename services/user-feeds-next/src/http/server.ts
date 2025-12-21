@@ -5,6 +5,8 @@
 import type { Server } from "bun";
 import type { DeliveryRecordStore } from "../stores/interfaces/delivery-record-store";
 import type { DiscordRestClient } from "../delivery/mediums/discord/discord-rest-client";
+import type { ArticleFieldStore } from "../articles/comparison";
+import type { ResponseHashStore } from "../feeds/feed-event-handler";
 import {
   handleFilterValidation,
   handleValidateDiscordPayload,
@@ -13,6 +15,7 @@ import {
   handleGetArticles,
   handlePreview,
   handleTest,
+  handleDeliveryPreview,
 } from "./handlers";
 import { jsonResponse, handleError } from "./utils";
 
@@ -24,6 +27,10 @@ export interface HttpServerContext {
   discordClient: DiscordRestClient;
   /** Override the feed requests service host (for testing) */
   feedRequestsServiceHost: string;
+  /** Article field store for delivery preview */
+  articleFieldStore?: ArticleFieldStore;
+  /** Response hash store for delivery preview (to check if feed content changed) */
+  responseHashStore?: ResponseHashStore;
 }
 
 /**
@@ -87,6 +94,30 @@ export function createHttpServer(
             context.discordClient,
             context.feedRequestsServiceHost
           ),
+      },
+
+      "/v1/user-feeds/delivery-preview": {
+        POST: (req) => {
+          if (!context.articleFieldStore) {
+            return jsonResponse(
+              { message: "Article field store not configured" },
+              500
+            );
+          }
+          if (!context.responseHashStore) {
+            return jsonResponse(
+              { message: "Response hash store not configured" },
+              500
+            );
+          }
+          return handleDeliveryPreview(
+            req,
+            context.feedRequestsServiceHost,
+            context.articleFieldStore,
+            context.deliveryRecordStore,
+            context.responseHashStore
+          );
+        },
       },
     },
     fetch() {
