@@ -9,6 +9,7 @@ import {
   FeedRequestBadStatusCodeException,
   FeedRequestTimedOutException,
   FeedArticleNotFoundException,
+  FeedRequestInvalidSslCertificateException,
 } from "../../feed-fetcher/exceptions";
 import {
   CustomPlaceholderRegexEvalException,
@@ -31,6 +32,7 @@ export enum GetFeedArticlesRequestStatus {
   FetchError = "FETCH_ERROR",
   BadStatusCode = "BAD_STATUS_CODE",
   TimedOut = "TIMED_OUT",
+  InvalidSslCertificate = "INVALID_SSL_CERTIFICATE"
 }
 
 /**
@@ -98,6 +100,14 @@ export function handleError(err: unknown): Response {
   // Invalid JSON body -> 400 BAD_REQUEST
   if (err instanceof Error && err.message === "Invalid JSON body") {
     return jsonResponse({ message: err.message }, 400);
+  }
+
+  // Fastify JSON parsing error -> 400 BAD_REQUEST
+  if (
+    err instanceof Error &&
+    err.message.includes("Body is not valid JSON")
+  ) {
+    return jsonResponse({ message: "Invalid JSON body" }, 400);
   }
 
   // Unexpected errors -> 500 INTERNAL_SERVER_ERROR
@@ -177,6 +187,20 @@ export function handleGetArticlesError(err: unknown, url: string): Response {
         feedTitle: null,
       },
     });
+  }
+
+  if (err instanceof FeedRequestInvalidSslCertificateException) {
+    return jsonResponse({
+      result: {
+        requestStatus: GetFeedArticlesRequestStatus.InvalidSslCertificate,
+        articles: [],
+        totalArticles: 0,
+        selectedProperties: [],
+        url,
+        attemptedToResolveFromHtml: false,
+        feedTitle: null,
+      }
+    })
   }
 
   // Fall through to generic error handler

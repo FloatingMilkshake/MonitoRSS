@@ -1,20 +1,20 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import type { Server } from "bun";
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert";
+import type { FastifyInstance } from "fastify";
 import { randomUUID } from "crypto";
 import { createHttpServer } from "../../src/http";
 import { createTestDiscordRestClient } from "../../src/delivery";
 import {
-  getStores,
+  setupTestDatabase,
+  teardownTestDatabase,
+  type TestStores,
   getTestFeedRequestsServer,
 } from "../helpers/setup-integration-tests";
 import {
   ArticleDeliveryStatus,
   ArticleDeliveryContentType,
 } from "../../src/stores/interfaces/delivery-record-store";
-import {
-  ArticleDeliveryOutcome,
-  DeliveryPreviewStage,
-} from "../../src/delivery-preview";
+import { ArticleDeliveryOutcome } from "../../src/delivery-preview";
 import { FeedResponseRequestStatus } from "../../src/feed-fetcher";
 import { createHash } from "crypto";
 
@@ -42,11 +42,14 @@ const TEST_RSS_CONTENT = `<?xml version="1.0" encoding="UTF-8"?>
 // Type for JSON response bodies
 type JsonBody = Record<string, unknown>;
 
-let server: Server<undefined>;
+let stores: TestStores;
+let server: FastifyInstance;
 let baseUrl: string;
 
-describe("HTTP API (e2e)", () => {
-  beforeAll(() => {
+describe("HTTP API (e2e)", { concurrency: true }, () => {
+  before(async () => {
+    stores = await setupTestDatabase();
+
     // Register the test feed URL with the shared test feed requests server
     const testServer = getTestFeedRequestsServer();
     testServer.registerUrl(TEST_FEED_URL, () => ({
@@ -54,11 +57,8 @@ describe("HTTP API (e2e)", () => {
       hash: "test-hash",
     }));
 
-    // Get postgres-backed stores
-    const stores = getStores();
-
     // Start the HTTP server with postgres delivery record store
-    server = createHttpServer(
+    server = await createHttpServer(
       {
         deliveryRecordStore: stores.deliveryRecordStore,
         discordClient: createTestDiscordRestClient(),
@@ -71,11 +71,12 @@ describe("HTTP API (e2e)", () => {
     baseUrl = `http://localhost:${TEST_PORT}`;
   });
 
-  afterAll(() => {
-    server.stop();
+  after(async () => {
+    await server.close();
     // Clean up the registered URL
     const testServer = getTestFeedRequestsServer();
     testServer.unregisterUrl(TEST_FEED_URL);
+    await teardownTestDatabase();
   });
 
 
@@ -89,9 +90,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: {} }),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 401 with invalid API key", async () => {
@@ -104,9 +105,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: {} }),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("validates a valid logical expression with no errors", async () => {
@@ -132,11 +133,11 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: validExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result).toBeDefined();
-      expect(result.errors).toEqual([]);
+      assert.notStrictEqual(result, undefined);
+      assert.deepStrictEqual(result.errors, []);
     });
 
     it("validates expression with OR operator", async () => {
@@ -168,10 +169,10 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: validExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result.errors).toEqual([]);
+      assert.deepStrictEqual(result.errors, []);
     });
 
     it("returns errors for invalid expression type", async () => {
@@ -190,13 +191,13 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: invalidExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
       const errors = result.errors as string[];
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0]).toContain("type");
-      expect(errors[0]).toContain("LOGICAL");
+      assert.ok(errors.length > 0);
+      assert.ok(errors[0].includes("type"));
+      assert.ok(errors[0].includes("LOGICAL"));
     });
 
     it("returns errors for invalid operator", async () => {
@@ -215,12 +216,12 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: invalidExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
       const errors = result.errors as string[];
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0]).toContain("op");
+      assert.ok(errors.length > 0);
+      assert.ok(errors[0].includes("op"));
     });
 
     it("returns errors for missing children", async () => {
@@ -239,12 +240,12 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: invalidExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
       const errors = result.errors as string[];
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0]).toContain("children");
+      assert.ok(errors.length > 0);
+      assert.ok(errors[0].includes("children"));
     });
 
     it("returns errors for invalid child expression type", async () => {
@@ -268,12 +269,12 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: invalidExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
       const errors = result.errors as string[];
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0]).toContain("type");
+      assert.ok(errors.length > 0);
+      assert.ok(errors[0].includes("type"));
     });
 
     it("validates nested logical expressions", async () => {
@@ -317,10 +318,10 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ expression: nestedExpression }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result.errors).toEqual([]);
+      assert.deepStrictEqual(result.errors, []);
     });
 
     it("returns 400 for invalid JSON body", async () => {
@@ -333,7 +334,7 @@ describe("HTTP API (e2e)", () => {
         body: "not valid json",
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
 
     it("returns 400 for missing expression field", async () => {
@@ -346,7 +347,7 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
   });
 
@@ -354,9 +355,9 @@ describe("HTTP API (e2e)", () => {
     it("returns health status", async () => {
       const response = await fetch(`${baseUrl}/v1/user-feeds/health`);
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.status).toBe("ok");
+      assert.strictEqual(body.status, "ok");
     });
   });
 
@@ -364,9 +365,9 @@ describe("HTTP API (e2e)", () => {
     it("returns 404 for unknown routes", async () => {
       const response = await fetch(`${baseUrl}/unknown-route`);
 
-      expect(response.status).toBe(404);
+      assert.strictEqual(response.status, 404);
       const body = (await response.json()) as JsonBody;
-      expect(body.error).toBe("Not Found");
+      assert.strictEqual(body.error, "Not Found");
     });
   });
 
@@ -380,9 +381,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 401 with invalid API key", async () => {
@@ -395,9 +396,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 400 for missing required fields", async () => {
@@ -410,11 +411,11 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
       // Should have validation errors for missing type and feed
-      expect(body.length).toBeGreaterThan(0);
+      assert.ok(body.length > 0);
     });
 
     it("returns 400 for invalid type", async () => {
@@ -431,9 +432,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
     });
 
     it("returns 400 for missing feed url", async () => {
@@ -453,9 +454,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
     });
 
     it("returns 400 for missing mediumDetails", async () => {
@@ -471,9 +472,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
     });
 
     it("returns 400 for missing content in mediumDetails", async () => {
@@ -492,9 +493,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
     });
 
     it("returns 400 for missing embeds in mediumDetails", async () => {
@@ -513,9 +514,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
+      assert.ok(Array.isArray(body));
     });
   });
 
@@ -543,21 +544,21 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
-      expect(messages).toBeDefined();
-      expect(messages.length).toBeGreaterThan(0);
+      assert.notStrictEqual(messages, undefined);
+      assert.ok(messages.length > 0);
 
       const content = messages[0]?.content as string;
 
       // Verify HTML was converted to Discord markdown
-      expect(content).toContain("**Bold Title**");
-      expect(content).toContain("*italic*");
-      expect(content).not.toContain("<b>");
-      expect(content).not.toContain("<i>");
-      expect(content).not.toContain("&lt;");
+      assert.ok(content.includes("**Bold Title**"));
+      assert.ok(content.includes("*italic*"));
+      assert.ok(!content.includes("<b>"));
+      assert.ok(!content.includes("<i>"));
+      assert.ok(!content.includes("&lt;"));
     });
 
     it("applies regex custom placeholder in preview response", async () => {
@@ -594,16 +595,16 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
-      expect(messages).toBeDefined();
-      expect(messages.length).toBeGreaterThan(0);
+      assert.notStrictEqual(messages, undefined);
+      assert.ok(messages.length > 0);
 
       const content = messages[0]?.content as string;
       // Regex extracts "Bold Title" from "**Bold Title** and\n*italic*"
-      expect(content).toBe("Bold Title and\n*italic*");
+      assert.strictEqual(content, "Bold Title and\n*italic*");
     });
 
     it("applies uppercase custom placeholder in preview response", async () => {
@@ -634,12 +635,12 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
       const content = messages[0]?.content as string;
-      expect(content).toBe("**BOLD TITLE** AND\n*ITALIC*");
+      assert.strictEqual(content, "**BOLD TITLE** AND\n*ITALIC*");
     });
 
     it("applies lowercase custom placeholder in preview response", async () => {
@@ -670,12 +671,12 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
       const content = messages[0]?.content as string;
-      expect(content).toBe("**bold title** and\n*italic*");
+      assert.strictEqual(content, "**bold title** and\n*italic*");
     });
 
     it("applies url encode custom placeholder in preview response", async () => {
@@ -706,14 +707,14 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
       const content = messages[0]?.content as string;
       // Spaces and newlines should be encoded (asterisks are not encoded by encodeURIComponent)
-      expect(content).toContain("%20");
-      expect(content).toContain("%0A");
+      assert.ok(content.includes("%20"));
+      assert.ok(content.includes("%0A"));
     });
 
     it("applies chained custom placeholder steps in preview response", async () => {
@@ -751,13 +752,13 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const messages = body.messages as JsonBody[];
 
       const content = messages[0]?.content as string;
       // First regex extracts "Bold Title", then uppercase makes it "BOLD TITLE"
-      expect(content).toBe("BOLD TITLE AND\n*ITALIC*");
+      assert.strictEqual(content, "BOLD TITLE AND\n*ITALIC*");
     });
 
     it("returns customPlaceholderPreviews when includeCustomPlaceholderPreviews is true", async () => {
@@ -796,21 +797,21 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
 
       // customPlaceholderPreviews should be present
       const previews = body.customPlaceholderPreviews as string[][];
-      expect(previews).toBeDefined();
-      expect(Array.isArray(previews)).toBe(true);
-      expect(previews.length).toBe(1);
+      assert.notStrictEqual(previews, undefined);
+      assert.ok(Array.isArray(previews));
+      assert.strictEqual(previews.length, 1);
 
       // Each preview array shows: [original, after step 1, after step 2, ...]
       const placeholderPreview = previews[0] as string[];
-      expect(placeholderPreview.length).toBe(3);
-      expect(placeholderPreview[0]).toBe("**Bold Title** and\n*italic*"); // original
-      expect(placeholderPreview[1]).toBe("Bold Title and\n*italic*"); // after regex
-      expect(placeholderPreview[2]).toBe("BOLD TITLE AND\n*ITALIC*"); // after uppercase
+      assert.strictEqual(placeholderPreview.length, 3);
+      assert.strictEqual(placeholderPreview[0], "**Bold Title** and\n*italic*"); // original
+      assert.strictEqual(placeholderPreview[1], "Bold Title and\n*italic*"); // after regex
+      assert.strictEqual(placeholderPreview[2], "BOLD TITLE AND\n*ITALIC*"); // after uppercase
     });
 
     it("returns 422 for invalid regex in custom placeholder", async () => {
@@ -847,9 +848,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(422);
+      assert.strictEqual(response.status, 422);
       const body = (await response.json()) as JsonBody;
-      expect(body.code).toBe("CUSTOM_PLACEHOLDER_REGEX_EVAL");
+      assert.strictEqual(body.code, "CUSTOM_PLACEHOLDER_REGEX_EVAL");
     });
   });
 
@@ -863,9 +864,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ data: {} }),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 401 with invalid API key", async () => {
@@ -878,9 +879,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ data: {} }),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns valid=true for empty componentsV2", async () => {
@@ -893,9 +894,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({ data: { componentsV2: null } }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.valid).toBe(true);
+      assert.strictEqual(body.valid, true);
     });
 
     it("returns valid=false with errors for invalid componentsV2", async () => {
@@ -912,11 +913,11 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.valid).toBe(false);
-      expect(Array.isArray(body.errors)).toBe(true);
-      expect((body.errors as unknown[]).length).toBeGreaterThan(0);
+      assert.strictEqual(body.valid, false);
+      assert.ok(Array.isArray(body.errors));
+      assert.ok((body.errors as unknown[]).length > 0);
     });
 
     it("returns valid=true for valid componentsV2 with multiple component types", async () => {
@@ -959,9 +960,9 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.valid).toBe(true);
+      assert.strictEqual(body.valid, true);
     });
   });
 
@@ -975,7 +976,7 @@ describe("HTTP API (e2e)", () => {
         }
       );
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
 
     it("returns count=0 for feed with no deliveries", async () => {
@@ -987,14 +988,13 @@ describe("HTTP API (e2e)", () => {
         }
       );
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result.count).toBe(0);
+      assert.strictEqual(result.count, 0);
     });
 
     it("returns correct count for feed with deliveries in time window", async () => {
-      const stores = getStores();
       const { deliveryRecordStore } = stores;
       const feedId = randomUUID();
       const mediumId = randomUUID();
@@ -1021,7 +1021,7 @@ describe("HTTP API (e2e)", () => {
       });
 
       // Verify records were inserted
-      expect(insertResult?.inserted).toBe(2);
+      assert.strictEqual(insertResult?.inserted, 2);
 
       const response = await fetch(
         `${baseUrl}/v1/user-feeds/${feedId}/delivery-count?timeWindowSec=3600`,
@@ -1030,16 +1030,15 @@ describe("HTTP API (e2e)", () => {
         }
       );
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result.count).toBe(2);
+      assert.strictEqual(result.count, 2);
     });
   });
 
   describe("GET /v1/user-feeds/:feedId/delivery-logs", () => {
     it("returns delivery logs with parent and child records", async () => {
-      const stores = getStores();
       const { deliveryRecordStore } = stores;
       const feedId = randomUUID();
       const mediumId = randomUUID();
@@ -1102,13 +1101,13 @@ describe("HTTP API (e2e)", () => {
         }
       );
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
       const logs = result.logs as JsonBody[];
 
-      expect(logs).toBeDefined();
-      expect(logs.length).toBe(2);
+      assert.notStrictEqual(logs, undefined);
+      assert.strictEqual(logs.length, 2);
     });
 
     it("returns 400 without required skip param", async () => {
@@ -1120,7 +1119,7 @@ describe("HTTP API (e2e)", () => {
         }
       );
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
   });
 
@@ -1134,9 +1133,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 401 with invalid API key", async () => {
@@ -1149,9 +1148,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns articles for valid feed URL", async () => {
@@ -1172,12 +1171,12 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const result = body.result as JsonBody;
-      expect(result.requestStatus).toBe("SUCCESS");
-      expect(Array.isArray(result.articles)).toBe(true);
-      expect((result.articles as unknown[]).length).toBeGreaterThan(0);
+      assert.strictEqual(result.requestStatus, "SUCCESS");
+      assert.ok(Array.isArray(result.articles));
+      assert.ok((result.articles as unknown[]).length > 0);
     });
 
     it("returns 400 for missing required fields", async () => {
@@ -1190,7 +1189,7 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
   });
 
@@ -1237,7 +1236,7 @@ describe("HTTP API (e2e)", () => {
         </channel>
       </rss>`;
 
-    beforeAll(() => {
+    before(() => {
       const testServer = getTestFeedRequestsServer();
       testServer.registerUrl(DIAGNOSE_FEED_URL, () => ({
         body: DIAGNOSE_RSS_CONTENT,
@@ -1249,7 +1248,7 @@ describe("HTTP API (e2e)", () => {
       }));
     });
 
-    afterAll(() => {
+    after(() => {
       const testServer = getTestFeedRequestsServer();
       testServer.unregisterUrl(DIAGNOSE_FEED_URL);
       testServer.unregisterUrl(OLD_DATE_FEED_URL);
@@ -1262,9 +1261,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 401 with invalid API key", async () => {
@@ -1277,9 +1276,9 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(401);
+      assert.strictEqual(response.status, 401);
       const body = (await response.json()) as JsonBody;
-      expect(body.message).toBe("Unauthorized");
+      assert.strictEqual(body.message, "Unauthorized");
     });
 
     it("returns 400 for missing required fields", async () => {
@@ -1292,10 +1291,10 @@ describe("HTTP API (e2e)", () => {
         body: JSON.stringify({}),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
       const body = (await response.json()) as JsonBody[];
-      expect(Array.isArray(body)).toBe(true);
-      expect(body.length).toBeGreaterThan(0);
+      assert.ok(Array.isArray(body));
+      assert.ok(body.length > 0);
     });
 
     it("returns 400 for missing feed.id", async () => {
@@ -1316,7 +1315,7 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
 
     it("returns 400 for missing feed.url", async () => {
@@ -1337,7 +1336,7 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
 
     it("returns 400 for invalid limit", async () => {
@@ -1360,7 +1359,7 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      assert.strictEqual(response.status, 400);
     });
 
     it("returns FirstRunBaseline outcome for feed with no prior articles", async () => {
@@ -1386,31 +1385,20 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2); // Feed has 2 articles
+      assert.strictEqual(body.total, 2); // Feed has 2 articles
       const results = body.results as JsonBody[];
-      expect(results.length).toBe(2); // Should return both articles
+      assert.strictEqual(results.length, 2); // Should return both articles
 
       const result = results[0]!;
-      expect(result.articleId).toBe(DIAGNOSE_ARTICLE_ID_1);
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.FirstRunBaseline);
-      expect(result.outcomeReason).toBeDefined();
-      expect(Array.isArray(result.stages)).toBe(true);
-
-      // Should have FeedState stage showing first run
-      const stages = result.stages as JsonBody[];
-      const feedStateStage = stages.find(
-        (s) => s.stage === DeliveryPreviewStage.FeedState
-      );
-      expect(feedStateStage).toBeDefined();
-      expect(feedStateStage?.details).toBeDefined();
-      const feedStateDetails = feedStateStage?.details as JsonBody;
-      expect(feedStateDetails.isFirstRun).toBe(true);
+      assert.strictEqual(result.articleId, DIAGNOSE_ARTICLE_ID_1);
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.FirstRunBaseline);
+      assert.notStrictEqual(result.outcomeReason, undefined);
+      assert.deepStrictEqual(result.mediumResults, []);
     });
 
     it("returns DuplicateId outcome for previously seen article", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
 
@@ -1454,26 +1442,18 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.DuplicateId);
-      expect(result.outcomeReason).toContain("already been seen");
-
-      // Should have IdComparison stage showing not new
-      const stages = result.stages as JsonBody[];
-      const idComparisonStage = stages.find(
-        (s) => s.stage === DeliveryPreviewStage.IdComparison
-      );
-      expect(idComparisonStage).toBeDefined();
-      expect(idComparisonStage?.passed).toBe(false);
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.DuplicateId);
+      assert.ok((result.outcomeReason as string).includes("already been seen"));
+      assert.deepStrictEqual(result.mediumResults, []);
     });
 
     it("returns WouldDeliver outcome for new article that passes all checks", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
 
@@ -1512,18 +1492,17 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.WouldDeliver);
-      expect(result.outcomeReason).toContain("passes all checks");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.WouldDeliver);
+      assert.ok((result.outcomeReason as string).includes("passes all checks"));
     });
 
     it("returns RateLimitedFeed outcome when feed daily limit exceeded", async () => {
-      const stores = getStores();
       const { articleFieldStore, deliveryRecordStore } = stores;
       const feedId = randomUUID();
       const mediumId = randomUUID();
@@ -1578,18 +1557,17 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.RateLimitedFeed);
-      expect(result.outcomeReason).toContain("daily article delivery limit");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.RateLimitedFeed);
+      assert.ok((result.outcomeReason as string).includes("daily article delivery limit"));
     });
 
     it("returns RateLimitedMedium outcome when medium rate limit exceeded", async () => {
-      const stores = getStores();
       const { articleFieldStore, deliveryRecordStore } = stores;
       const feedId = randomUUID();
       const mediumId = randomUUID();
@@ -1642,18 +1620,17 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.RateLimitedMedium);
-      expect(result.outcomeReason).toContain("rate limit");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.RateLimitedMedium);
+      assert.ok((result.outcomeReason as string).includes("rate limit"));
     });
 
     it("returns FilteredByMediumFilter outcome when medium filter blocks article", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
       const mediumId = randomUUID();
@@ -1706,18 +1683,17 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.FilteredByMediumFilter);
-      expect(result.outcomeReason).toContain("filtered out by medium");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.FilteredByMediumFilter);
+      assert.ok((result.outcomeReason as string).includes("filtered out"));
     });
 
     it("returns BlockedByComparison outcome when blocking comparison field was seen", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
 
@@ -1765,18 +1741,17 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.BlockedByComparison);
-      expect(result.outcomeReason).toContain("blocked by comparison");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.BlockedByComparison);
+      assert.ok((result.outcomeReason as string).includes("blocked by comparison"));
     });
 
     it("returns WouldDeliverPassingComparison outcome when passing comparison field changed", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
 
@@ -1825,20 +1800,19 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(
+      assert.strictEqual(result.outcome, 
         ArticleDeliveryOutcome.WouldDeliverPassingComparison
       );
-      expect(result.outcomeReason).toContain("comparison field has changed");
+      assert.ok((result.outcomeReason as string).includes("comparison field has changed"));
     });
 
     it("returns FilteredByDateCheck outcome when article is too old", async () => {
-      const stores = getStores();
       const { articleFieldStore } = stores;
       const feedId = randomUUID();
 
@@ -1876,14 +1850,14 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(1);
+      assert.strictEqual(body.total, 1);
       const results = body.results as JsonBody[];
       const result = results[0]!;
 
-      expect(result.outcome).toBe(ArticleDeliveryOutcome.FilteredByDateCheck);
-      expect(result.outcomeReason).toContain("older than");
+      assert.strictEqual(result.outcome, ArticleDeliveryOutcome.FilteredByDateCheck);
+      assert.ok((result.outcomeReason as string).includes("older than"));
     });
 
     it("returns paginated results with correct total", async () => {
@@ -1910,12 +1884,12 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response1.status).toBe(200);
+      assert.strictEqual(response1.status, 200);
       const body1 = (await response1.json()) as JsonBody;
-      expect(body1.total).toBe(2); // Total articles in feed
+      assert.strictEqual(body1.total, 2); // Total articles in feed
       const results1 = body1.results as JsonBody[];
-      expect(results1.length).toBe(1); // Only 1 returned due to limit
-      expect(results1[0]!.articleId).toBe(DIAGNOSE_ARTICLE_ID_1);
+      assert.strictEqual(results1.length, 1); // Only 1 returned due to limit
+      assert.strictEqual(results1[0]!.articleId, DIAGNOSE_ARTICLE_ID_1);
 
       // Second request - get second article
       const response2 = await fetch(`${baseUrl}${endpoint}`, {
@@ -1938,12 +1912,12 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response2.status).toBe(200);
+      assert.strictEqual(response2.status, 200);
       const body2 = (await response2.json()) as JsonBody;
-      expect(body2.total).toBe(2);
+      assert.strictEqual(body2.total, 2);
       const results2 = body2.results as JsonBody[];
-      expect(results2.length).toBe(1);
-      expect(results2[0]!.articleId).toBe(DIAGNOSE_ARTICLE_ID_2);
+      assert.strictEqual(results2.length, 1);
+      assert.strictEqual(results2[0]!.articleId, DIAGNOSE_ARTICLE_ID_2);
     });
 
     it("returns results without stages when summaryOnly is true", async () => {
@@ -1970,19 +1944,18 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
-      expect(body.total).toBe(2);
+      assert.strictEqual(body.total, 2);
       const results = body.results as JsonBody[];
 
-      expect(results.length).toBe(1);
-      expect(results[0]!.articleId).toBe(DIAGNOSE_ARTICLE_ID_1);
-      expect(results[0]!.outcome).toBeDefined();
-      expect(results[0]!.stages).toBeUndefined();
+      assert.strictEqual(results.length, 1);
+      assert.strictEqual(results[0]!.articleId, DIAGNOSE_ARTICLE_ID_1);
+      assert.notStrictEqual(results[0]!.outcome, undefined);
+      assert.deepStrictEqual(results[0]!.mediumResults, []);
     });
 
     it("returns FeedUnchanged outcome when feed hash matches stored hash", async () => {
-      const stores = getStores();
       const { articleFieldStore, responseHashStore } = stores;
       const feedId = randomUUID();
 
@@ -2019,21 +1992,21 @@ describe("HTTP API (e2e)", () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      assert.strictEqual(response.status, 200);
       const body = (await response.json()) as JsonBody;
       const results = body.results as JsonBody[];
 
       // Should return articles with FeedUnchanged outcome, not empty results
-      expect(body.total).toBe(2); // Feed has 2 articles
-      expect(results.length).toBe(2);
+      assert.strictEqual(body.total, 2); // Feed has 2 articles
+      assert.strictEqual(results.length, 2);
 
       // All articles should have FeedUnchanged outcome
-      expect(results[0]!.outcome).toBe(ArticleDeliveryOutcome.FeedUnchanged);
-      expect(results[0]!.outcomeReason).toBeDefined();
-      expect(results[0]!.stages).toEqual([]); // No diagnostic stages
+      assert.strictEqual(results[0]!.outcome, ArticleDeliveryOutcome.FeedUnchanged);
+      assert.notStrictEqual(results[0]!.outcomeReason, undefined);
+      assert.deepStrictEqual(results[0]!.mediumResults, []);
 
       // Should NOT have feedState in response (removed "unchanged" as feed-level state)
-      expect(body.feedState).toBeUndefined();
+      assert.strictEqual(body.feedState, undefined);
     });
 
     it("returns feedState error when feed XML is invalid", async () => {
@@ -2047,7 +2020,6 @@ describe("HTTP API (e2e)", () => {
       }));
 
       try {
-        const stores = getStores();
         const { articleFieldStore } = stores;
         const feedId = randomUUID();
 
@@ -2081,18 +2053,18 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("parse-error");
-        expect(feedState.errorType).toBe("invalid");
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("parse error");
+        assert.strictEqual(feedState.state, "parse-error");
+        assert.strictEqual(feedState.errorType, "invalid");
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("parse error"));
       } finally {
         testServer.unregisterUrl(INVALID_XML_FEED_URL);
       }
@@ -2129,18 +2101,18 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("fetch-error");
-        expect(feedState.errorType).toBe("timeout");
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("timeout");
+        assert.strictEqual(feedState.state, "fetch-error");
+        assert.strictEqual(feedState.errorType, "timeout");
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("timeout"));
       } finally {
         testServer.unregisterUrl(TIMEOUT_FEED_URL);
       }
@@ -2178,19 +2150,19 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("fetch-error");
-        expect(feedState.errorType).toBe("bad-status-code");
-        expect(feedState.httpStatusCode).toBe(503);
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("bad-status-code");
+        assert.strictEqual(feedState.state, "fetch-error");
+        assert.strictEqual(feedState.errorType, "bad-status-code");
+        assert.strictEqual(feedState.httpStatusCode, 503);
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("bad-status-code"));
       } finally {
         testServer.unregisterUrl(BAD_STATUS_FEED_URL);
       }
@@ -2227,18 +2199,18 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("fetch-error");
-        expect(feedState.errorType).toBe("fetch");
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("fetch");
+        assert.strictEqual(feedState.state, "fetch-error");
+        assert.strictEqual(feedState.errorType, "fetch");
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("fetch"));
       } finally {
         testServer.unregisterUrl(FETCH_ERROR_FEED_URL);
       }
@@ -2276,18 +2248,18 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("fetch-error");
-        expect(feedState.errorType).toBe("internal");
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("internal");
+        assert.strictEqual(feedState.state, "fetch-error");
+        assert.strictEqual(feedState.errorType, "internal");
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("internal"));
       } finally {
         testServer.unregisterUrl(INTERNAL_ERROR_FEED_URL);
       }
@@ -2324,18 +2296,18 @@ describe("HTTP API (e2e)", () => {
           }),
         });
 
-        expect(response.status).toBe(200);
+        assert.strictEqual(response.status, 200);
         const body = (await response.json()) as JsonBody;
         const results = body.results as JsonBody[];
         const errors = body.errors as JsonBody[];
 
-        expect(results.length).toBe(0);
-        expect(body.total).toBe(0);
+        assert.strictEqual(results.length, 0);
+        assert.strictEqual(body.total, 0);
         const feedState = body.feedState as JsonBody;
-        expect(feedState.state).toBe("fetch-error");
-        expect(feedState.errorType).toBe("parse");
-        expect(errors.length).toBe(1);
-        expect(errors[0]!.message).toContain("parse");
+        assert.strictEqual(feedState.state, "fetch-error");
+        assert.strictEqual(feedState.errorType, "parse");
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0]!.message.includes("parse"));
       } finally {
         testServer.unregisterUrl(PARSE_ERROR_FEED_URL);
       }
