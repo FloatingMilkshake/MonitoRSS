@@ -60,7 +60,11 @@ interface MessageBuilderContextType {
       | ComponentType.V2ActionRow
       | ComponentType.V2Button
       | ComponentType.V2Section
-      | ComponentType.V2Divider,
+      | ComponentType.V2Divider
+      | ComponentType.V2Container
+      | ComponentType.V2MediaGallery
+      | ComponentType.V2MediaGalleryItem
+      | ComponentType.V2Thumbnail,
     isAccessory?: boolean
   ) => Component | null;
   deleteComponent: (componentId: string) => void;
@@ -338,14 +342,13 @@ const MessageBuilderInternalProvider: React.FC<{ children: React.ReactNode }> = 
           const childIndex = component.children.findIndex((child) => child.id === componentId);
 
           if (childIndex > 0) {
-            // IDs must also be updated since IDs are position-based
             const newChildren = [...component.children];
-            const temp = newChildren[childIndex - 1];
-            const tempId = newChildren[childIndex - 1].id;
-            newChildren[childIndex - 1] = { ...newChildren[childIndex], id: tempId };
-            newChildren[childIndex] = { ...temp, id: newChildren[childIndex].id };
-            setCurrentSelectedId(tempId);
-            setCurrentFocusedId(tempId);
+            [newChildren[childIndex - 1], newChildren[childIndex]] = [
+              newChildren[childIndex],
+              newChildren[childIndex - 1],
+            ];
+            setCurrentSelectedId(newChildren[childIndex - 1].id);
+            setCurrentFocusedId(newChildren[childIndex - 1].id);
 
             return {
               ...component,
@@ -362,7 +365,9 @@ const MessageBuilderInternalProvider: React.FC<{ children: React.ReactNode }> = 
         return component;
       };
 
-      setValue("messageComponent", updateTree(messageComponent) as V2MessageComponentRoot);
+      setValue("messageComponent", updateTree(messageComponent) as V2MessageComponentRoot, {
+        shouldValidate: true,
+      });
     },
     [getValues, setValue]
   );
@@ -378,14 +383,13 @@ const MessageBuilderInternalProvider: React.FC<{ children: React.ReactNode }> = 
           const childIndex = component.children.findIndex((child) => child.id === componentId);
 
           if (childIndex >= 0 && childIndex < component.children.length - 1) {
-            // IDs must also be updated since IDs are position-based
             const newChildren = [...component.children];
-            const temp = newChildren[childIndex + 1];
-            const tempId = newChildren[childIndex + 1].id;
-            newChildren[childIndex + 1] = { ...newChildren[childIndex], id: tempId };
-            newChildren[childIndex] = { ...temp, id: newChildren[childIndex].id };
-            setCurrentSelectedId(tempId);
-            setCurrentFocusedId(tempId);
+            [newChildren[childIndex], newChildren[childIndex + 1]] = [
+              newChildren[childIndex + 1],
+              newChildren[childIndex],
+            ];
+            setCurrentSelectedId(newChildren[childIndex + 1].id);
+            setCurrentFocusedId(newChildren[childIndex + 1].id);
 
             return {
               ...component,
@@ -402,7 +406,9 @@ const MessageBuilderInternalProvider: React.FC<{ children: React.ReactNode }> = 
         return component;
       };
 
-      setValue("messageComponent", updateTree(messageComponent) as V2MessageComponentRoot);
+      setValue("messageComponent", updateTree(messageComponent) as V2MessageComponentRoot, {
+        shouldValidate: true,
+      });
     },
     [getValues, setValue]
   );

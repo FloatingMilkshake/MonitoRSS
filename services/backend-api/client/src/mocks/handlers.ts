@@ -727,12 +727,31 @@ const handlers = [
     });
   }),
 
-  http.post("/api/v1/user-feeds/:feedId/get-articles", async ({ request }) => {
+  http.post("/api/v1/user-feeds/:feedId/get-articles", async ({ request, params }) => {
+    const { feedId } = params;
     const { skip, limit, filters } = (await request.json()) as {
       skip: number;
       limit: number;
       filters: Record<string, unknown>;
     };
+
+    // Return empty articles when feedId contains "empty" (for testing empty feed state)
+    if (typeof feedId === "string" && feedId.includes("empty")) {
+      await delay(500);
+
+      return HttpResponse.json<GetUserFeedArticlesOutput>({
+        result: {
+          articles: [],
+          totalArticles: 0,
+          requestStatus: UserFeedArticleRequestStatus.Success,
+          response: {
+            statusCode: 200,
+          },
+          filterStatuses: [],
+          selectedProperties: [],
+        },
+      });
+    }
 
     const useSkip = skip || 0;
     const useLimit = limit || 10;
@@ -852,6 +871,17 @@ const handlers = [
     });
   }),
 
+  http.post("/api/v1/user-feeds/:feedId/test-send", async () => {
+    await delay(500);
+
+    return HttpResponse.json(
+      {
+        result: mockSendTestArticleResult,
+      },
+      { status: 200 }
+    );
+  }),
+
   http.get("/api/v1/user-feeds/:feedId/retry", async ({ params }) => {
     const { feedId } = params as Record<string, unknown>;
     const feed = mockUserFeeds.find((f) => f.id === feedId);
@@ -914,6 +944,16 @@ const handlers = [
   http.post("/api/v1/user-feeds/:feedId/connections/discord-channels", async () => {
     await delay(500);
 
+    // Sample error state for testing - uncomment the error response to test error handling
+    // return HttpResponse.json(
+    //   generateMockApiErrorResponse({
+    //     code: "DISCORD_CHANNEL_PERMISSIONS_MISSING",
+    //   }),
+    //   {
+    //     status: 403,
+    //   }
+    // );
+
     return HttpResponse.json<CreateDiscordChannelConnectionOutput>({
       result: mockFeedChannelConnections[0],
     });
@@ -952,6 +992,14 @@ const handlers = [
   }),
 
   http.post("/api/v1/user-feeds/:feedId/connections/discord-channels/:id/preview", async () => {
+    await delay(500);
+
+    return HttpResponse.json<CreateDiscordChannelConnectionPreviewOutput>({
+      result: getMockCreatePreviewResult(true),
+    });
+  }),
+
+  http.post("/api/v1/user-feeds/:feedId/connections/template-preview", async () => {
     await delay(500);
 
     return HttpResponse.json<CreateDiscordChannelConnectionPreviewOutput>({

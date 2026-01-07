@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Box,
   Flex,
@@ -35,6 +35,7 @@ import {
 } from "@chakra-ui/react";
 import { WarningIcon, SettingsIcon, InfoIcon } from "@chakra-ui/icons";
 import { FaChevronDown, FaChevronUp } from "react-icons/fa";
+import { HiTemplate } from "react-icons/hi";
 import { useFormContext } from "react-hook-form";
 import { useParams, Link as RouterLink, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -44,7 +45,11 @@ import { ComponentPropertiesPanel } from "./MessageBuilder/ComponentPropertiesPa
 import { ComponentTreeItem } from "./MessageBuilder/ComponentTreeItem";
 import { ComponentTreeToolbar } from "./MessageBuilder/ComponentTreeToolbar";
 import { NavigableTreeItem } from "../components/NavigableTree";
-import { NavigableTreeContext, NavigableTreeProvider } from "../contexts/NavigableTreeContext";
+import {
+  NavigableTreeContext,
+  NavigableTreeProvider,
+  useNavigableTreeContext,
+} from "../contexts/NavigableTreeContext";
 import {
   MessageBuilderProvider,
   useMessageBuilderContext,
@@ -62,7 +67,7 @@ import {
   UserFeedConnectionProvider,
   useUserFeedConnectionContext,
 } from "../contexts/UserFeedConnectionContext";
-import { FeedConnectionType } from "../types";
+import { FeedConnectionType, FeedDiscordChannelConnection } from "../types";
 import MessageBuilderFormState from "./MessageBuilder/types/MessageBuilderFormState";
 import { useUpdateDiscordChannelConnection } from "../features/feedConnections";
 import {
@@ -76,6 +81,11 @@ import { UserFeedTabSearchParam } from "../constants/userFeedTabSearchParam";
 import { MessageBuilderTour } from "../components/MessageBuilderTour";
 import { useMessageBuilderTour, useIsMessageBuilderDesktop } from "../hooks";
 import { MESSAGE_BUILDER_MOBILE_BREAKPOINT } from "./MessageBuilder/constants/MessageBuilderMobileBreakpoint";
+import { useUserFeedArticles } from "../features/feed/hooks";
+import { TemplateGalleryModal } from "../features/templates/components/TemplateGalleryModal";
+import { TEMPLATES, getTemplateById, DEFAULT_TEMPLATE } from "../features/templates/constants";
+import { detectFields } from "../features/templates/utils";
+import { useTemplateFeedFields } from "../features/templates/hooks";
 
 const SIDE_PANEL_WIDTH = {
   base: "350px",
@@ -89,7 +99,8 @@ const CENTER_PANEL_WIDTH = {
 
 const MessageBuilderContent: React.FC = () => {
   const { resetMessage } = useMessageBuilderContext();
-  const { watch, handleSubmit, formState } = useFormContext<MessageBuilderFormState>();
+  const { watch, handleSubmit, formState, setValue } = useFormContext<MessageBuilderFormState>();
+  const { setCurrentSelectedId } = useNavigableTreeContext();
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
   const [isProblemsCollapsed, setIsProblemsCollapsed] = useState(false);
   const messageComponent = watch("messageComponent");
@@ -99,15 +110,82 @@ const MessageBuilderContent: React.FC = () => {
     onOpen: onProblemsDialogOpen,
     onClose: onProblemsDialogClose,
   } = useDisclosure();
+  const {
+    isOpen: isTemplatesOpen,
+    onOpen: onOpenTemplates,
+    onClose: onCloseTemplates,
+  } = useDisclosure();
   const cancelRef = React.useRef<HTMLButtonElement>(null);
+  const templatesButtonRef = useRef<HTMLButtonElement>(null);
   const [scrollToComponentId, setScrollToComponentId] = useState<string | null>(null);
   const { feedId, connectionId } = useParams<RouteParams>();
   const { mutateAsync: updateConnection, status: updateStatus } =
     useUpdateDiscordChannelConnection();
   const { createSuccessAlert, createErrorAlert } = usePageAlertContext();
-  const { userFeed, connection } = useUserFeedConnectionContext();
+  const { userFeed, connection } = useUserFeedConnectionContext<FeedDiscordChannelConnection>();
   const { resetTour, resetTrigger } = useMessageBuilderTour();
   const isDesktop = useIsMessageBuilderDesktop();
+
+  // Template gallery state
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>(undefined);
+  const [selectedArticleId, setSelectedArticleId] = useState<string | undefined>(undefined);
+
+  // Fetch articles for template gallery (only when modal open)
+  const { data: galleryArticlesData, status: galleryArticlesStatus } = useUserFeedArticles({
+    feedId,
+    data: {
+      skip: 0,
+      limit: 10,
+      selectProperties: ["*"],
+      formatOptions: {
+        dateFormat: userFeed?.formatOptions?.dateFormat,
+        dateTimezone: userFeed?.formatOptions?.dateTimezone,
+        disableImageLinkPreviews: false,
+        formatTables: false,
+        ignoreNewLines: false,
+        stripImages: false,
+      },
+    },
+    disabled: !isTemplatesOpen,
+  });
+
+  const galleryArticles = galleryArticlesData?.result?.articles || [];
+  const feedFields = useTemplateFeedFields(galleryArticles as Array<Record<string, unknown>>);
+
+  // Set initial selected article when articles load
+  useEffect(() => {
+    if (galleryArticles.length > 0 && !selectedArticleId) {
+      setSelectedArticleId(galleryArticles[0].id);
+    }
+  }, [galleryArticles, selectedArticleId]);
+
+  // Reset template selection when modal closes
+  const handleCloseTemplatesModal = () => {
+    setSelectedTemplateId(undefined);
+    onCloseTemplates();
+  };
+
+  // Detect fields from articles for template creation
+  const detectedFields = useMemo(() => {
+    return detectFields(galleryArticles);
+  }, [galleryArticles]);
+
+  // Apply template to form state
+  const handleApplyTemplate = (selectedId: string) => {
+    const template = getTemplateById(selectedId) || DEFAULT_TEMPLATE;
+    const newMessageComponent = template.createMessageComponent(detectedFields);
+
+    setValue("messageComponent", newMessageComponent, {
+      shouldValidate: true,
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+
+    // Select the root component so the user sees something selected
+    setCurrentSelectedId(newMessageComponent.id);
+
+    handleCloseTemplatesModal();
+  };
 
   // Header hooks
   const { data: discordBotData, status: botStatus, error: botError } = useDiscordBot();
@@ -371,6 +449,17 @@ const MessageBuilderContent: React.FC = () => {
                         Take Tour
                       </Button>
                     )}
+                    <Button
+                      ref={templatesButtonRef}
+                      variant="outline"
+                      colorScheme="gray"
+                      size="sm"
+                      onClick={onOpenTemplates}
+                      leftIcon={<HiTemplate />}
+                      data-tour-target="templates-button"
+                    >
+                      Templates
+                    </Button>
                     <HStack spacing={3} data-tour-target="save-discard-buttons">
                       <Button
                         variant="outline"
@@ -517,12 +606,7 @@ const MessageBuilderContent: React.FC = () => {
                   )}
                   {/* Problems Section - Mobile Tabs */}
                   {!isDesktop && (
-                    <Box
-                      borderTop="1px"
-                      borderColor="gray.600"
-                      transition="padding-bottom 0.3s ease"
-                      // flex={1}
-                    >
+                    <Box borderTop="1px" borderColor="gray.600">
                       <Tabs
                         colorScheme="blue"
                         variant="line"
@@ -607,6 +691,32 @@ const MessageBuilderContent: React.FC = () => {
             />
             {/* Tour Component */}
             <MessageBuilderTour resetTrigger={resetTrigger} />
+            {/* Template Gallery Modal */}
+            <TemplateGalleryModal
+              isOpen={isTemplatesOpen}
+              onClose={handleCloseTemplatesModal}
+              templates={TEMPLATES}
+              selectedTemplateId={selectedTemplateId}
+              onTemplateSelect={setSelectedTemplateId}
+              feedFields={feedFields}
+              detectedFields={detectedFields}
+              articles={galleryArticles}
+              selectedArticleId={selectedArticleId}
+              onArticleChange={setSelectedArticleId}
+              isLoadingArticles={galleryArticlesStatus === "loading"}
+              feedId={feedId!}
+              connectionId={connectionId}
+              userFeed={userFeed}
+              connection={connection}
+              modalTitle="Browse Templates"
+              showComparisonPreview
+              currentMessageComponent={messageComponent}
+              primaryActionLabel="Use this template"
+              onPrimaryAction={handleApplyTemplate}
+              secondaryActionLabel="Cancel"
+              onSecondaryAction={handleCloseTemplatesModal}
+              finalFocusRef={templatesButtonRef}
+            />
           </Box>
         );
       }}
