@@ -27,7 +27,7 @@ services:
     command: mongod --port 27017
     #logging:
     #  driver: none
-    image: mongo:8
+    image: mongo:8.0
     volumes:
       #- "mongodb-data:/data/db"
       - './data/mongo:/data/db'
@@ -49,8 +49,8 @@ services:
     #  driver: none
     image: postgres:17-alpine
     volumes:
-      #- feed-requests-postgres16-data:/var/lib/postgresql/data
-      - './data/feed-requests-postgres16-data:/var/lib/postgresql/data'
+      #- feed-requests-postgres17-data:/var/lib/postgresql/data
+      - './data/feed-requests-postgres17-data:/var/lib/postgresql/data'
       - ./services/feed-requests/sql/setup.sql:/docker-entrypoint-initdb.d/setup.sql
     networks:
       - monitorss-default
